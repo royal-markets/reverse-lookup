@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import styles from "./styles/Form.module.css";
+import Input from './Input';
 
 const SearchByURLForm = ({ socket, toast }) => {
   const initialState = { spotifyUrl: "" };
@@ -43,25 +44,7 @@ const SearchByURLForm = ({ socket, toast }) => {
   const { spotifyUrl } = formState;
 
   return (
-    <form className={styles.Form} onSubmit={submitForm}>
-      <div style={{ flexGrow: 1 }}>
-        <div>Search by URL</div>
-        <input
-          type="text"
-          name="spotifyUrl"
-          id="spotifyUrl"
-          value={spotifyUrl}
-          placeholder="https://open.spotify.com/.../..."
-          onChange={handleChange}
-        />
-      </div>
-      <input
-        className={styles.Submit}
-        type="submit"
-        value="Submit"
-        onClick={submitForm}
-      />
-    </form>
+    <Input spotifyUrl={spotifyUrl} handleChange={handleChange} submitForm={submitForm} />
   );
 };
 
