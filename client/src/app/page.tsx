@@ -1,4 +1,6 @@
 'use client';
+
+import "../globals.css";
 import React, { useEffect, useState, useRef } from "react";
 import io from "socket.io-client";
 import SearchByURLForm from "../components/SearchByURLForm";
@@ -299,7 +301,7 @@ const Page = (): JSX.Element => {
       </div>
       
       <SearchByURLForm socket={socket} toast={toast} />
-      <SearchByContentHashForm socket={socket} toast={toast} />
+      {/* <SearchByContentHashForm socket={socket} toast={toast} /> */}
       <ToastContainer
         position="top-center"
         autoClose={5000}
