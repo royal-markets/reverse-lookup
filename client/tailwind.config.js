@@ -93,6 +93,69 @@ module.exports = {
           900: "#83380c",
           950: "#481d04",
         },
+      
+        // Dark - 3
+        base: {
+          black: "#0A0A0A",
+          975: "#121212",
+          950: "#1B1B1B",
+          900: "#242424",
+          850: "#2D2D2D",
+          800: "#363636",
+          700: "#4A4A4A",
+          600: "#5E5E5E",
+          500: "#727272",
+          300: "#9C9C9C",
+          200: "#B6B6B6",
+          150: "#D0D0D0",
+          100: "#EAEAEA",
+          50: "#F5F5F5",
+          25: "#FAFAFA",
+          paper: "#FFFFFF",
+        },
+
+        red: {
+          DEFAULT: "#FF1744",
+          light: "#FF616F",
+        },
+     
+        green: {
+          DEFAULT: "#00E676",
+          light: "#66FFA6",
+        },
+        cyan: {
+          DEFAULT: "#00B8D4",
+          light: "#62EFFF",
+        },
+        blue: {
+          DEFAULT: "#2979FF",
+          light: "#75A7FF",
+        },
+        purple: {
+          DEFAULT: "#D500F9",
+          light: "#EA80FC",
+        },
+        magenta: {
+          DEFAULT: "#FF4081",
+          light: "#FF79B0",
+        },
+        teal: {
+          DEFAULT: "#1DE9B6",
+          light: "#64FFDA",
+        },
+        pink: {
+          DEFAULT: "#FF80AB",
+          light: "#FFB3CD",
+        },
+      
+        lime: {
+          DEFAULT: "#C6FF00",
+          light: "#EEFF41",
+        },
+        fuchsia: {
+          DEFAULT: "#FF00FF",
+          light: "#FF66FF",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
