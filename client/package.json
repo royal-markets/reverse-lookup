@@ -33,7 +33,10 @@
     "react-wrap-balancer": "^1.1.0",
     "sonner": "^1.2.4",
     "@apollo/client": "^3.9.0",
-    "graphql": "^16.8.0"
+    "graphql": "^16.8.0",
+    "zod": "^3.22.4",
+    "@hookform/resolvers": "^3.3.4",
+    "react-hook-form": "^7.50.0"
   },
   "scripts": {
     "dev": "next dev",
