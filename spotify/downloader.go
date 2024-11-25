@@ -361,7 +361,13 @@ func getYTID(trackCopy *Track) (string, error) {
 	// If the song exists, we can use the existing YouTube ID
 	if ytidExists {
 		key := utils.GenerateSongKey(trackCopy.Title, trackCopy.Artist)
-		song, exists, err := db.NewDBClient().GetSongByKey(key)
+		dbClient, err := db.NewDBClient()
+		if err != nil {
+			return "", fmt.Errorf("error connecting to database: %v", err)
+		}
+		defer dbClient.Close()
+
+		song, exists, err := dbClient.GetSongByKey(key)
 		if err == nil && exists && song.YouTubeID == ytID {
 			// If this is our song, use the existing YouTube ID
 			return ytID, nil
