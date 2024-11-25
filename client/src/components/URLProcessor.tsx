@@ -11,9 +11,21 @@ interface Props {
   socket: Socket;
 }
 
+interface Match {
+  SongTitle: string;
+  SongArtist: string;
+  Score: number;
+  blake3_hash?: string;
+  YouTubeID?: string;
+  Timestamp: number;
+  SongID: number;
+}
+
 const URLProcessor: React.FC<Props> = ({ socket }) => {
   const [state, setState] = useState<URLProcessingState>('idle');
+  console.log('state in URLProcessor:', state)
   const [result, setResult] = useState<ProcessingResult>({});
+  console.log('result in URLProcessor:', result)
 
   const {
     register,
@@ -24,6 +36,15 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
     resolver: zodResolver(spotifyUrlSchema)
   });
 
+  const resetFormOnly = () => {
+    setState('idle');
+  };
+
+  const resetAll = () => {
+    setState('idle');
+    setResult({});
+  };
+
   React.useEffect(() => {
     if (!socket) {
       console.log('Socket not initialized');
@@ -31,36 +52,58 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
     }
 
     socket.on("downloadStatus", (msg) => {
-      console.log("Received downloadStatus:", msg);
+      console.log("Received downloadStatus:", msg, typeof msg);
+      
+      if (typeof msg === 'string') {
+        if (msg.includes('Starting download...')) {
+          console.log('Showing download start message');
+          toast.info(msg);
+          return;
+        }
+        if (msg.toLowerCase().includes('failed to convert to wav')) {
+          console.log('Ignoring WAV conversion error');
+          return;
+        }
+      }
+
       try {
-        if (typeof msg === 'string' && msg.toLowerCase().includes('failed to convert to wav')) {
-          setState('fingerprinting');
-          return;
-        }
-
         const status = typeof msg === 'string' ? JSON.parse(msg) : msg;
-
-        if (typeof status === 'string') {
-          if (!status.toLowerCase().includes('failed to convert to wav')) {
-            toast.info(status);
-          }
-          return;
-        }
+        console.log("Parsed status:", status);
 
         if (status.type === 'success') {
-          setState('fingerprinting');
-          toast.success(status.message);
+          console.log('Success status received:', status.message);
+          
+          if (status.message === 'Analysis complete') {
+            console.log('Analysis complete, enabling input');
+            setState('complete');
+            toast.success(status.message);
+            setTimeout(resetFormOnly, 1000);
+          } else {
+            console.log('Download succeeded, moving to fingerprinting');
+            setState('fingerprinting');
+            toast.success(status.message);
+            
+            if (status.filename) {
+              console.log("Emitting find_and_save for:", status.filename);
+              socket.emit("processURL", JSON.stringify({
+                command: 'find_and_save',
+                filePath: status.filename
+              }));
+            }
+          }
         } else if (status.type === 'error') {
+          console.log('Received error status:', status.message);
           if (!status.message?.toLowerCase().includes('failed to convert to wav')) {
             setState('error');
             toast.error(status.message);
-          } else {
-            setState('fingerprinting');
+            setTimeout(resetFormOnly, 1000);
           }
-        } else {
+        } else if (status.type === 'info') {
+          console.log('Received info message:', status.message);
           toast.info(status.message);
         }
       } catch (err) {
+        console.error('Parse error:', err, 'Original message:', msg);
         if (typeof msg === 'string' && !msg.toLowerCase().includes('failed to convert to wav')) {
           toast.info(msg);
         }
@@ -70,7 +113,9 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
     socket.on("provenanceMatch", (match) => {
       try {
         const parsedMatch = JSON.parse(match);
-        setResult(prev => ({ ...prev, provenanceMatch: parsedMatch }));
+        const setResultObject = (prev => ({...prev, provenanceMatch: parsedMatch}))
+        console.log('setting result to in socket handler for provenanceMatch:', setResultObject)
+        setResult(setResultObject);
         setState('complete');
       } catch (err) {
         console.error('Error parsing provenance match:', err);
@@ -80,12 +125,41 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
 
     socket.on("similarityResults", (matches) => {
       try {
+        console.log("Received similarity results:", matches);
         const parsedMatches = JSON.parse(matches);
-        setResult(prev => ({ ...prev, matches: parsedMatches }));
+        setResult(prev => ({...prev, matches: parsedMatches}));
         setState('complete');
       } catch (err) {
         console.error('Error parsing similarity results:', err);
         toast.error('Error processing similarity results');
+        setState('idle');
+      }
+    });
+
+    socket.on("cacheStatus", (result) => {
+      try {
+        console.log("Received cache status:", result);
+        const status = typeof result === 'string' ? JSON.parse(result) : result;
+        
+        if (status.found) {
+          setState('fingerprinting');
+          console.log("Found in cache, analyzing:", status.filePath);
+          socket.emit("processURL", JSON.stringify({
+            command: 'find_and_save',
+            filePath: status.filePath
+          }));
+          toast.info("Song found in cache, analyzing...");
+        } else {
+          console.log("Not in cache, downloading:", status.url);
+          socket.emit("processURL", JSON.stringify({
+            url: status.url,
+            type: status.type,
+            command: 'download'
+          }));
+        }
+      } catch (err) {
+        console.error('Error parsing cache status:', err);
+        toast.error('Error checking cache');
       }
     });
 
@@ -93,16 +167,22 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
       socket.off("downloadStatus");
       socket.off("provenanceMatch");
       socket.off("similarityResults");
+      socket.off("cacheStatus");
     };
   }, [socket]);
 
   const onSubmit = async (data: SpotifyUrlInput) => {
     try {
+      console.log('Starting URL submission:', data.url);
       setState('downloading');
+      console.log('setting result to empty in onSubmit')
+      setResult({});
       
       const urlType = data.url.includes('/track/') ? 'track' :
                      data.url.includes('/album/') ? 'album' :
                      data.url.includes('/playlist/') ? 'playlist' : null;
+
+      console.log('Detected URL type:', urlType);
 
       if (!urlType) {
         setState('error');
@@ -113,10 +193,10 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
       const payload = {
         url: data.url,
         type: urlType,
-        command: 'download'
+        command: 'check_and_process'
       };
       
-      console.log('Sending URL to server:', payload);
+      console.log('Sending payload to server:', payload);
       socket.emit("processURL", JSON.stringify(payload));
 
       reset();
@@ -124,6 +204,7 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
       console.error("Error processing URL:", error);
       setState('error');
       toast.error("Failed to process URL");
+      setTimeout(resetFormOnly, 1000);
     }
   };
 
@@ -181,7 +262,7 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
         )}
       </div>
 
-      {state === 'complete' && (
+      {(state === 'complete' || (state === 'idle' && result.matches && result.matches.length > 0)) && (
         <div className="results">
           {result.provenanceMatch && (
             <div className="provenance-match">
@@ -192,7 +273,23 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
           {result.matches && result.matches.length > 0 && (
             <div className="similarity-matches">
               <h3>Similar Songs</h3>
-              <pre>{JSON.stringify(result.matches, null, 2)}</pre>
+              {result.matches.map((match: Match, index: number) => (
+                <div key={index} className="match-item">
+                  <h4>{match.SongTitle} by {match.SongArtist}</h4>
+                  <p>Raw Score: {match.Score.toFixed(2)} matching fingerprints</p>
+                  {match.blake3_hash && (
+                    <div className="hash-info">
+                      <p>Content Hash (BLAKE3):</p>
+                      <code>{match.blake3_hash}</code>
+                    </div>
+                  )}
+                  {match.YouTubeID && (
+                    <div className="youtube-info">
+                      <p>YouTube ID: {match.YouTubeID}</p>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -295,6 +392,39 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
 
         .error {
           color: #ef4444;
+        }
+
+        .match-item {
+          margin-bottom: 1.5rem;
+          padding: 1rem;
+          background-color: #f3f4f6;
+          border-radius: 0.5rem;
+        }
+
+        .match-item h4 {
+          margin: 0 0 0.5rem 0;
+          color: #1f2937;
+        }
+
+        .hash-info {
+          margin-top: 0.5rem;
+        }
+
+        .hash-info p {
+          margin: 0;
+          color: #4b5563;
+          font-size: 0.875rem;
+        }
+
+        code {
+          display: block;
+          padding: 0.5rem;
+          background-color: #e5e7eb;
+          border-radius: 0.25rem;
+          font-family: monospace;
+          font-size: 0.875rem;
+          word-break: break-all;
+          margin-top: 0.25rem;
         }
       `}</style>
     </div>

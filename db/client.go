@@ -18,9 +18,12 @@ type DBClient interface {
 	GetSongByKey(key string) (Song, bool, error)
 	DeleteSongByID(songID uint32) error
 	DeleteCollection(collectionName string) error
+	StoreHash(songID uint32, hash string) error
+	GetHash(songID uint32) (string, error)
 }
 
 type Song struct {
+	ID        uint32
 	Title     string
 	Artist    string
 	YouTubeID string

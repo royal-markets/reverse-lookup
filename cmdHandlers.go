@@ -17,6 +17,8 @@ import (
 	"song-recognition/wav"
 	"strconv"
 	"strings"
+	"encoding/json"
+	"sync"
 
 	"github.com/fatih/color"
 	socketio "github.com/googollee/go-socket.io"
@@ -25,7 +27,6 @@ import (
 	"github.com/googollee/go-socket.io/engineio/transport/polling"
 	"github.com/googollee/go-socket.io/engineio/transport/websocket"
 	"github.com/mdobak/go-xerrors"
-	
 )
 
 const (
@@ -33,6 +34,28 @@ const (
 )
 
 var yellow = color.New(color.FgYellow)
+
+type SpotifyCache struct {
+	mu    sync.RWMutex
+	cache map[string]string // maps Spotify URL to local file path
+}
+
+var spotifyCache = SpotifyCache{
+	cache: make(map[string]string),
+}
+
+func (sc *SpotifyCache) Add(url, filepath string) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.cache[url] = filepath
+}
+
+func (sc *SpotifyCache) Get(url string) (string, bool) {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	path, exists := sc.cache[url]
+	return path, exists
+}
 
 func find(filePath string) {
 	wavInfo, err := wav.ReadWavInfo(filePath)
@@ -130,13 +153,10 @@ func serve(protocol, port string) {
 	server.OnConnect("/", func(socket socketio.Conn) error {
 		socket.SetContext("")
 		log.Println("CONNECTED: ", socket.ID())
-
 		return nil
 	})
 
-	server.OnEvent("/", "totalSongs", handleTotalSongs)
-	server.OnEvent("/", "newDownload", handleSongDownload)
-	server.OnEvent("/", "newRecording", handleNewRecording)
+	setupSocketHandlers(server)
 
 	server.OnError("/", func(s socketio.Conn, e error) {
 		log.Println("meet error:", e)
@@ -154,7 +174,6 @@ func serve(protocol, port string) {
 	defer server.Close()
 
 	serveHTTPS := protocol == "https"
-
 	serveHTTP(server, serveHTTPS, port)
 }
 
@@ -321,71 +340,210 @@ func saveSong(filePath string, force bool) error {
 
 	return nil
 }
-// In your main.go or socket handler file
+
 func setupSocketHandlers(server *socketio.Server) {
-    server.OnEvent("/", "processURL", func(s socketio.Conn, msg string) {
-        var data struct {
-            URL     string `json:"url"`
-            Type    string `json:"type"`
-            Command string `json:"command"`
-        }
+	server.OnEvent("/", "processURL", func(s socketio.Conn, msg string) {
+		log.Printf("Received processURL event: %s", msg)
+		
+		var data struct {
+			URL      string `json:"url"`
+			Type     string `json:"type"`
+			Command  string `json:"command"`
+			
+			FilePath string `json:"filePath"`
+		}
 
-        if err := json.Unmarshal([]byte(msg), &data); err != nil {
-            s.Emit("downloadStatus", map[string]string{
-                "type":    "error",
-                "message": "Invalid request format",
-            })
-            return
-        }
+		if err := json.Unmarshal([]byte(msg), &data); err != nil {
+			log.Printf("Error parsing message: %v", err)
+			s.Emit("downloadStatus", map[string]string{
+				"type":    "error",
+				"message": "Invalid request format",
+			})
+			return
+		}
 
-        // Create songs directory if it doesn't exist
-        savePath := "./songs"
-        if err := os.MkdirAll(savePath, 0755); err != nil {
-            s.Emit("downloadStatus", map[string]string{
-                "type":    "error",
-                "message": "Failed to create songs directory",
-            })
-            return
-        }
+		log.Printf("Processing command: %s for URL: %s", data.Command, data.URL)
 
-        // Start download in a goroutine
-        go func() {
-            s.Emit("downloadStatus", map[string]string{
-                "type":    "info",
-                "message": "Starting download...",
-            })
+		switch data.Command {
+		case "check_and_process":
+			log.Printf("Checking cache for URL: %s", data.URL)
+			// Check cache first
+			if filepath, exists := spotifyCache.Get(data.URL); exists {
+				s.Emit("cacheStatus", map[string]interface{}{
+					"found":    true,
+					"filePath": filepath,
+				})
+				return
+			}
+			// Not in cache, send back info to proceed with download
+			s.Emit("cacheStatus", map[string]interface{}{
+				"found": false,
+				"url":   data.URL,
+				"type":  data.Type,
+			})
 
-            var err error
-            var totalTracks int
+		case "find_and_save":
+			go func() {
+				log.Printf("Processing find_and_save for file: %s", data.FilePath)
+				
+				// Run fingerprint matching first
+				wavInfo, err := wav.ReadWavInfo(data.FilePath)
+				if err != nil {
+					log.Printf("Error reading wave info: %v", err)
+					s.Emit("downloadStatus", map[string]string{
+						"type":    "error",
+						"message": "Error reading wave info",
+					})
+					return
+				}
+				log.Printf("Successfully read WAV info: duration=%v, sampleRate=%v", wavInfo.Duration, wavInfo.SampleRate)
 
-            switch data.Type {
-            case "track":
-                totalTracks, err = spotify.DlSingleTrack(data.URL, savePath)
-            case "album":
-                totalTracks, err = spotify.DlAlbum(data.URL, savePath)
-            case "playlist":
-                totalTracks, err = spotify.DlPlaylist(data.URL, savePath)
-            default:
-                s.Emit("downloadStatus", map[string]string{
-                    "type":    "error",
-                    "message": "Invalid URL type",
-                })
-                return
-            }
+				samples, err := wav.WavBytesToSamples(wavInfo.Data)
+				if err != nil {
+					log.Printf("Error converting to samples: %v", err)
+					s.Emit("downloadStatus", map[string]string{
+						"type":    "error",
+						"message": "Error converting to samples",
+					})
+					return
+				}
+				log.Printf("Successfully converted WAV to samples: len=%d", len(samples))
 
-            if err != nil {
-                s.Emit("downloadStatus", map[string]string{
-                    "type":    "error",
-                    "message": fmt.Sprintf("Download failed: %v", err),
-                })
-                return
-            }
+				// Debug database state
+				dbClient, err := db.NewDBClient()
+				if err != nil {
+					log.Printf("Error connecting to database: %v", err)
+					return
+				}
+				defer dbClient.Close()
 
-            s.Emit("downloadStatus", map[string]string{
-                "type":    "success",
-                "message": fmt.Sprintf("Successfully downloaded %d tracks", totalTracks),
-            })
-        }()
-    })
+				totalSongs, err := dbClient.TotalSongs()
+				if err != nil {
+					log.Printf("Error getting total songs: %v", err)
+				} else {
+					log.Printf("Total songs in database: %d", totalSongs)
+				}
+
+				matches, searchDuration, err := shazam.FindMatches(samples, wavInfo.Duration, wavInfo.SampleRate)
+				if err != nil {
+					log.Printf("Error finding matches: %v", err)
+					s.Emit("downloadStatus", map[string]string{
+						"type":    "error",
+						"message": "Error finding matches",
+					})
+					return
+				}
+				log.Printf("Found %d matches in %v", len(matches), searchDuration)
+
+				// If we have matches, send them
+				if len(matches) > 0 {
+					matchesWithHash := make([]SongResponse, len(matches))
+					for i, m := range matches {
+						log.Printf("Match %d: %s by %s (score: %f)", i, m.SongTitle, m.SongArtist, m.Score)
+						matchesWithHash[i] = SongResponse{
+							Title:     m.SongTitle,
+							Artist:    m.SongArtist,
+							Score:     m.Score,
+							YouTubeID: m.YouTubeID,
+							Timestamp: m.Timestamp,
+							SongID:    m.SongID,
+						}
+					}
+
+					// Send results
+					matchesJSON, _ := json.Marshal(matchesWithHash)
+					log.Printf("Sending matches: %s", string(matchesJSON))
+					s.Emit("similarityResults", string(matchesJSON))
+				} else {
+					log.Printf("No matches found")
+				}
+
+				// Always send completion status
+				s.Emit("downloadStatus", map[string]string{
+					"type":    "success",
+					"message": "Analysis complete",
+				})
+			}()
+
+		case "download":
+			log.Printf("Starting download for URL: %s", data.URL)
+			go func() {
+				log.Printf("Starting download process for URL: %s, Type: %s", data.URL, data.Type)
+				
+				// Send initial download message
+				s.Emit("downloadStatus", "Starting download...")
+				
+				var err error
+				var filePath string
+
+				switch data.Type {
+				case "track":
+					log.Printf("Downloading track from URL: %s", data.URL)
+					_, filePath, err = spotify.DlSingleTrackWithPath(data.URL, SONGS_DIR)
+					if err == nil && filePath != "" {
+						log.Printf("Track downloaded successfully to: %s", filePath)
+						spotifyCache.Add(data.URL, filePath)
+						s.Emit("downloadStatus", map[string]interface{}{
+							"type":     "success",
+							"message":  fmt.Sprintf("Successfully downloaded track to %s", filePath),
+							"filename": filePath,
+						})
+					} else {
+						log.Printf("Error downloading track: %v", err)
+					}
+				case "album":
+					log.Printf("Downloading album from URL: %s", data.URL)
+					_, err = spotify.DlAlbum(data.URL, SONGS_DIR)
+				case "playlist":
+					log.Printf("Downloading playlist from URL: %s", data.URL)
+					_, err = spotify.DlPlaylist(data.URL, SONGS_DIR)
+				default:
+					log.Printf("Invalid URL type: %s", data.Type)
+					s.Emit("downloadStatus", map[string]string{
+						"type":    "error",
+						"message": "Invalid URL type",
+					})
+					return
+				}
+
+				if err != nil {
+					log.Printf("Download error: %v", err)
+					s.Emit("downloadStatus", map[string]string{
+						"type":    "error",
+						"message": fmt.Sprintf("Download failed: %v", err),
+					})
+					return
+				}
+			}()
+		}
+	})
+}
+
+type SongResponse struct {
+	Title      string  `json:"SongTitle"`
+	Artist     string  `json:"SongArtist"`
+	Score      float64 `json:"Score"`
+	Hash       string  `json:"blake3_hash,omitempty"`
+	YouTubeID  string  `json:"YouTubeID"`
+	Timestamp  uint32  `json:"Timestamp"`
+	SongID     uint32  `json:"SongID"`
+}
+
+func calculateMatchScore(matches []shazam.Match, wavInfo *wav.WavInfo) []SongResponse {
+	matchesWithScores := make([]SongResponse, len(matches))
+	for i, m := range matches {
+		// Calculate matches per second
+		matchDensity := m.Score / float64(wavInfo.Duration)
+		
+		matchesWithScores[i] = SongResponse{
+			Title:     m.SongTitle,
+			Artist:    m.SongArtist,
+			Score:     matchDensity,  // Matches per second
+			YouTubeID: m.YouTubeID,
+			Timestamp: m.Timestamp,
+			SongID:    m.SongID,
+		}
+	}
+	return matchesWithScores
 }
 

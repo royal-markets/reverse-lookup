@@ -16,6 +16,7 @@ import (
 
 type MongoClient struct {
 	client *mongo.Client
+	songs  *mongo.Collection
 }
 
 func NewMongoClient(uri string) (*MongoClient, error) {
@@ -24,7 +25,13 @@ func NewMongoClient(uri string) (*MongoClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to MongoDB: %s", err)
 	}
-	return &MongoClient{client: client}, nil
+
+	songs := client.Database("song-recognition").Collection("songs")
+
+	return &MongoClient{
+		client: client,
+		songs:  songs,
+	}, nil
 }
 
 func (db *MongoClient) Close() error {
@@ -160,8 +167,14 @@ func (db *MongoClient) GetSong(filterKey string, value interface{}) (s Song, son
 	ytID := song["ytID"].(string)
 	title := strings.Split(song["key"].(string), "---")[0]
 	artist := strings.Split(song["key"].(string), "---")[1]
+	id := uint32(song["_id"].(int64))
 
-	songInstance := Song{title, artist, ytID}
+	songInstance := Song{
+		ID:        id,
+		Title:     title,
+		Artist:    artist,
+		YouTubeID: ytID,
+	}
 
 	return songInstance, true, nil
 }
@@ -198,4 +211,25 @@ func (db *MongoClient) DeleteCollection(collectionName string) error {
 		return fmt.Errorf("error deleting collection: %v", err)
 	}
 	return nil
+}
+
+func (db *MongoClient) StoreHash(songID uint32, hash string) error {
+	filter := bson.M{"_id": songID}
+	update := bson.M{"$set": bson.M{"blake3_hash": hash}}
+	_, err := db.songs.UpdateOne(context.Background(), filter, update)
+	return err
+}
+
+func (db *MongoClient) GetHash(songID uint32) (string, error) {
+	var song struct {
+		Blake3Hash string `bson:"blake3_hash"`
+	}
+	err := db.songs.FindOne(context.Background(), bson.M{"_id": songID}).Decode(&song)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return "", fmt.Errorf("no hash found for song ID %d", songID)
+		}
+		return "", err
+	}
+	return song.Blake3Hash, nil
 }

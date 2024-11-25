@@ -4,13 +4,18 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"song-recognition/utils"
 
 	"github.com/mdobak/go-xerrors"
-	"github.com/googollee/go-socket.io/engineio"
 	"github.com/googollee/go-socket.io"
+	"github.com/googollee/go-socket.io/engineio"
+	"github.com/googollee/go-socket.io/engineio/transport"
+	"github.com/googollee/go-socket.io/engineio/transport/polling"
+	"github.com/googollee/go-socket.io/engineio/transport/websocket"
 )
 
 func main() {
@@ -37,10 +42,41 @@ func main() {
 	}
 
 	server := socketio.NewServer(&engineio.Options{
-		Transports: []string{"websocket", "polling"},
+		Transports: []transport.Transport{
+			&polling.Transport{
+				CheckOrigin: func(r *http.Request) bool {
+					return true
+				},
+			},
+			&websocket.Transport{
+				CheckOrigin: func(r *http.Request) bool {
+					return true
+				},
+			},
+		},
+	})
+
+	server.OnConnect("/", func(s socketio.Conn) error {
+		log.Printf("Client connected: %s", s.ID())
+		return nil
+	})
+
+	server.OnDisconnect("/", func(s socketio.Conn, reason string) {
+		log.Printf("Client disconnected: %s, reason: %s", s.ID(), reason)
+	})
+
+	server.OnError("/", func(s socketio.Conn, err error) {
+		log.Printf("Socket error: %v", err)
 	})
 
 	setupSocketHandlers(server)
+
+	go func() {
+		if err := server.Serve(); err != nil {
+			log.Fatalf("Socket.IO server error: %v", err)
+		}
+	}()
+	defer server.Close()
 
 	switch os.Args[1] {
 	case "find":

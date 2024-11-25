@@ -11,6 +11,7 @@ require (
 	github.com/mdobak/go-xerrors v0.3.1
 	github.com/stretchr/testify v1.9.0
 	github.com/tidwall/gjson v1.17.1
+	github.com/zeebo/blake3 v0.2.4
 	go.mongodb.org/mongo-driver v1.14.0
 	gonum.org/v1/gonum v0.14.0
 	google.golang.org/api v0.166.0
@@ -39,6 +40,7 @@ require (
 	github.com/googleapis/gax-go/v2 v2.12.1 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/klauspost/compress v1.17.6 // indirect
+	github.com/klauspost/cpuid/v2 v2.0.12 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mjibson/go-dsp v0.0.0-20180508042940-11479a337f12 // indirect
