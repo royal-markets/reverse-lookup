@@ -25,26 +25,68 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
   });
 
   React.useEffect(() => {
+    if (!socket) {
+      console.log('Socket not initialized');
+      return;
+    }
+
     socket.on("downloadStatus", (msg) => {
-      const status = JSON.parse(msg);
-      if (status.type === 'success') {
-        setState('fingerprinting');
-      } else if (status.type === 'error') {
-        setState('error');
-        toast.error(status.message);
+      console.log("Received downloadStatus:", msg);
+      try {
+        if (typeof msg === 'string' && msg.toLowerCase().includes('failed to convert to wav')) {
+          setState('fingerprinting');
+          return;
+        }
+
+        const status = typeof msg === 'string' ? JSON.parse(msg) : msg;
+
+        if (typeof status === 'string') {
+          if (!status.toLowerCase().includes('failed to convert to wav')) {
+            toast.info(status);
+          }
+          return;
+        }
+
+        if (status.type === 'success') {
+          setState('fingerprinting');
+          toast.success(status.message);
+        } else if (status.type === 'error') {
+          if (!status.message?.toLowerCase().includes('failed to convert to wav')) {
+            setState('error');
+            toast.error(status.message);
+          } else {
+            setState('fingerprinting');
+          }
+        } else {
+          toast.info(status.message);
+        }
+      } catch (err) {
+        if (typeof msg === 'string' && !msg.toLowerCase().includes('failed to convert to wav')) {
+          toast.info(msg);
+        }
       }
-      toast[status.type || 'info'](status.message);
     });
 
     socket.on("provenanceMatch", (match) => {
-      const parsedMatch = JSON.parse(match);
-      setResult(prev => ({ ...prev, provenanceMatch: parsedMatch }));
+      try {
+        const parsedMatch = JSON.parse(match);
+        setResult(prev => ({ ...prev, provenanceMatch: parsedMatch }));
+        setState('complete');
+      } catch (err) {
+        console.error('Error parsing provenance match:', err);
+        toast.error('Error processing provenance match');
+      }
     });
 
     socket.on("similarityResults", (matches) => {
-      const parsedMatches = JSON.parse(matches);
-      setResult(prev => ({ ...prev, matches: parsedMatches }));
-      setState('complete');
+      try {
+        const parsedMatches = JSON.parse(matches);
+        setResult(prev => ({ ...prev, matches: parsedMatches }));
+        setState('complete');
+      } catch (err) {
+        console.error('Error parsing similarity results:', err);
+        toast.error('Error processing similarity results');
+      }
     });
 
     return () => {
@@ -57,8 +99,27 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
   const onSubmit = async (data: SpotifyUrlInput) => {
     try {
       setState('downloading');
-      socket.emit("processURL", JSON.stringify({ url: data.url }));
-      reset(); // Clear the form after successful submission
+      
+      const urlType = data.url.includes('/track/') ? 'track' :
+                     data.url.includes('/album/') ? 'album' :
+                     data.url.includes('/playlist/') ? 'playlist' : null;
+
+      if (!urlType) {
+        setState('error');
+        toast.error('Invalid Spotify URL type');
+        return;
+      }
+
+      const payload = {
+        url: data.url,
+        type: urlType,
+        command: 'download'
+      };
+      
+      console.log('Sending URL to server:', payload);
+      socket.emit("processURL", JSON.stringify(payload));
+
+      reset();
     } catch (error) {
       console.error("Error processing URL:", error);
       setState('error');
@@ -66,13 +127,17 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
     }
   };
 
+  if (!socket) {
+    return <div>Connecting to server...</div>;
+  }
+
   return (
     <div className="url-processor">
       <form onSubmit={handleSubmit(onSubmit)}>
         <div className="input-group">
           <input
             type="url"
-            placeholder="Enter Spotify URL"
+            placeholder="Enter Spotify URL (track, album, or playlist)"
             disabled={state !== 'idle'}
             {...register('url')}
             className={errors.url ? 'error' : ''}
@@ -86,18 +151,35 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
           type="submit" 
           disabled={state !== 'idle'}
         >
-          Process
+          {state === 'idle' ? 'Process' : 'Processing...'}
         </button>
       </form>
 
-      {state !== 'idle' && (
-        <div className="status">
-          {state === 'downloading' && <div>Downloading...</div>}
-          {state === 'fingerprinting' && <div>Analyzing audio...</div>}
-          {state === 'checking_provenance' && <div>Checking provenance...</div>}
-          {state === 'error' && <div>Error occurred</div>}
-        </div>
-      )}
+      <div className="status">
+        {state === 'downloading' && (
+          <div className="status-message">
+            <div className="spinner"></div>
+            <span>Downloading audio...</span>
+          </div>
+        )}
+        {state === 'fingerprinting' && (
+          <div className="status-message">
+            <div className="spinner"></div>
+            <span>Analyzing audio fingerprint...</span>
+          </div>
+        )}
+        {state === 'checking_provenance' && (
+          <div className="status-message">
+            <div className="spinner"></div>
+            <span>Checking provenance...</span>
+          </div>
+        )}
+        {state === 'error' && (
+          <div className="status-message error">
+            <span>Error occurred</span>
+          </div>
+        )}
+      </div>
 
       {state === 'complete' && (
         <div className="results">
@@ -187,6 +269,32 @@ const URLProcessor: React.FC<Props> = ({ socket }) => {
           padding: 1rem;
           border-radius: 0.5rem;
           overflow-x: auto;
+        }
+
+        .status-message {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          justify-content: center;
+          margin: 1rem 0;
+        }
+
+        .spinner {
+          width: 20px;
+          height: 20px;
+          border: 2px solid #f3f3f3;
+          border-top: 2px solid #3498db;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+
+        .error {
+          color: #ef4444;
         }
       `}</style>
     </div>

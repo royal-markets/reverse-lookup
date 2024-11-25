@@ -25,6 +25,7 @@ import (
 	"github.com/googollee/go-socket.io/engineio/transport/polling"
 	"github.com/googollee/go-socket.io/engineio/transport/websocket"
 	"github.com/mdobak/go-xerrors"
+	
 )
 
 const (
@@ -320,3 +321,71 @@ func saveSong(filePath string, force bool) error {
 
 	return nil
 }
+// In your main.go or socket handler file
+func setupSocketHandlers(server *socketio.Server) {
+    server.OnEvent("/", "processURL", func(s socketio.Conn, msg string) {
+        var data struct {
+            URL     string `json:"url"`
+            Type    string `json:"type"`
+            Command string `json:"command"`
+        }
+
+        if err := json.Unmarshal([]byte(msg), &data); err != nil {
+            s.Emit("downloadStatus", map[string]string{
+                "type":    "error",
+                "message": "Invalid request format",
+            })
+            return
+        }
+
+        // Create songs directory if it doesn't exist
+        savePath := "./songs"
+        if err := os.MkdirAll(savePath, 0755); err != nil {
+            s.Emit("downloadStatus", map[string]string{
+                "type":    "error",
+                "message": "Failed to create songs directory",
+            })
+            return
+        }
+
+        // Start download in a goroutine
+        go func() {
+            s.Emit("downloadStatus", map[string]string{
+                "type":    "info",
+                "message": "Starting download...",
+            })
+
+            var err error
+            var totalTracks int
+
+            switch data.Type {
+            case "track":
+                totalTracks, err = spotify.DlSingleTrack(data.URL, savePath)
+            case "album":
+                totalTracks, err = spotify.DlAlbum(data.URL, savePath)
+            case "playlist":
+                totalTracks, err = spotify.DlPlaylist(data.URL, savePath)
+            default:
+                s.Emit("downloadStatus", map[string]string{
+                    "type":    "error",
+                    "message": "Invalid URL type",
+                })
+                return
+            }
+
+            if err != nil {
+                s.Emit("downloadStatus", map[string]string{
+                    "type":    "error",
+                    "message": fmt.Sprintf("Download failed: %v", err),
+                })
+                return
+            }
+
+            s.Emit("downloadStatus", map[string]string{
+                "type":    "success",
+                "message": fmt.Sprintf("Successfully downloaded %d tracks", totalTracks),
+            })
+        }()
+    })
+}
+

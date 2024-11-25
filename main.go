@@ -9,6 +9,8 @@ import (
 	"song-recognition/utils"
 
 	"github.com/mdobak/go-xerrors"
+	"github.com/googollee/go-socket.io/engineio"
+	"github.com/googollee/go-socket.io"
 )
 
 func main() {
@@ -33,6 +35,12 @@ func main() {
 		fmt.Println("Expected 'find', 'download', 'erase', 'save', or 'serve' subcommands")
 		os.Exit(1)
 	}
+
+	server := socketio.NewServer(&engineio.Options{
+		Transports: []string{"websocket", "polling"},
+	})
+
+	setupSocketHandlers(server)
 
 	switch os.Args[1] {
 	case "find":

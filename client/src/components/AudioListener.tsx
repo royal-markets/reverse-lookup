@@ -149,6 +149,11 @@ const AudioListener: React.FC<Props> = ({ socket }) => {
   };
 
   useEffect(() => {
+    if (!socket) {
+      console.log('Socket not initialized');
+      return;
+    }
+
     socket.on("matches", (matches) => {
       try {
         const parsedMatches = JSON.parse(matches);
@@ -171,6 +176,11 @@ const AudioListener: React.FC<Props> = ({ socket }) => {
       socket.off("matches");
     };
   }, [socket]);
+
+  // If socket is not available, show loading state
+  if (!socket) {
+    return <div>Connecting to server...</div>;
+  }
 
   return (
     <div className="audio-listener">
